@@ -6,6 +6,10 @@ import numpy as np
 import pandas as pd
 
 
+__all__ = ["main"]
+__author__ = "big-o"
+
+
 # TODO: Make field names and values configurable.
 _DATERNG = pd.Timedelta(weeks=8)
 _FLDS = {
