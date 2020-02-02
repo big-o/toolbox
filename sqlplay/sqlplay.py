@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import click
 from sqlalchemy import create_engine
 import numpy as np
