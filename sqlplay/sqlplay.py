@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import click
+from importlib.util import spec_from_file_location, module_from_spec
 from sqlalchemy import create_engine
 import numpy as np
 import pandas as pd
@@ -10,34 +11,28 @@ __all__ = ["main"]
 __author__ = "big-o"
 
 
-# TODO: Make field names and values configurable.
-_DATERNG = pd.Timedelta(weeks=8)
-_FLDS = {"userid": range(100), "action": ["on", "off"]}
-
-
 def prepare_fields(flds):
     flds = flds.copy()
-    flds["_timestamp"] = pd.date_range(
-        pd.Timestamp.now() - _DATERNG,
-        periods=_DATERNG.total_seconds() // 60,
-        freq="min",
-    )
 
     for key in flds:
-        vals = flds[key]
-        # Create random priors for each value.
-        p = np.random.normal(size=len(vals))
-        # Softmax to get probabilities.
-        priors = np.exp(p) / np.exp(p).sum()
+        fld = flds[key]
+        if "priors" not in fld and fld.get("repeat", True):
+            vals = fld["values"]
+            # Create random priors for each value.
+            p = np.random.normal(size=len(vals))
+            # Softmax to get probabilities.
+            priors = np.exp(p) / np.exp(p).sum()
 
-        flds[key] = vals, priors
+            fld["priors"] = priors
 
     return flds
 
 
 def make_row(flds):
     row = {
-        fld: np.random.choice(vals, p=priors) for fld, (vals, priors) in flds.items()
+        name: np.random.choice(fld["values"], p=fld["priors"])
+        for name, fld in flds.items()
+        if fld.get("repeat", True)
     }
 
     return row
@@ -50,15 +45,7 @@ def make_row(flds):
     required=True,
     help="SQL URL to make connection with, e.g. 'mysql://user@localhost'.",
 )
-@click.option(
-    "-c",
-    "--row-count",
-    default=10000,
-    type=click.IntRange(0, 10000, clamp=True),
-    help="Number of rows to create in table",
-)
 @click.option("-d", "--db", default="play", help="Database name")
-@click.option("-t", "--table", default="play", help="Table name")
 @click.option(
     "-e",
     "--if-exists",
@@ -67,8 +54,9 @@ def make_row(flds):
     help="Table name",
 )
 @click.option(
-    "-C",
+    "-c",
     "--config",
+    required=True,
     type=click.Path(exists=True, dir_okay=False, resolve_path=True),
     help=(
         "Optional config file. Should contain dicts of field names -> "
@@ -76,28 +64,43 @@ def make_row(flds):
         "The dict names will be used as table names."
     ),
 )
-def main(url, row_count, db, table, if_exists, config):
-    if config is None:
-        flds = _FLDS
-        flds = prepare_fields(flds)
-        make_table(url, row_count, db, if_exists, table, flds)
-    else:
-        from importlib.util import spec_from_file_location, module_from_spec
+def main(url, db, if_exists, config):
+    spec = spec_from_file_location("config", config)
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    tbls = mod.schema
 
-        spec = spec_from_file_location("config", config)
-        mod = module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        tbls = [getattr(mod, tbl) for tbl in dir(mod) if not tbl.startswith("_")]
-        for tbl in tbls:
-            tbl = tbl.copy()
-            tbl["fields"] = prepare_fields(tbl["fields"])
-            make_table(url, row_count, db, if_exists, **tbl)
+    for name, schema in tbls.items():
+        schema = schema.copy()
+        schema["fields"] = prepare_fields(schema["fields"])
+        make_table(url, db, if_exists, table=name, **schema)
 
 
-def make_table(url, row_count, db, if_exists, table, fields):
+def make_table(url, db, if_exists, table, size, fields):
+    df = pd.DataFrame([make_row(fields) for i in range(size)])
+    # Non-repeat fields weren't added. Add those now.
+    for field, schema in fields.items():
+        if not schema.get("repeat", True):
+            vals = schema["values"]
+            if size > len(vals):
+                vals = vals + [None] * (size - len(vals))
+            col = np.random.choice(vals, replace=False, size=len(vals))
+            if size < len(vals):
+                col = col[:size]
 
-    df = pd.DataFrame([make_row(fields) for i in range(row_count)])
-    df.sort_values("_timestamp", inplace=True)
+            df[field] = col
+
+    # Reset the ordering
+    df = df[list(fields.keys())]
+
+    sort_cols = [
+        (fields[fld]["sort"], fld) for fld in fields if fields[fld].get("sort", False)
+    ]
+    if len(sort_cols) > 0:
+        sort_cols.sort()
+        sort_cols = [f[1] for f in sort_cols]
+        df.sort_values(sort_cols, inplace=True)
+
     df.name = table
 
     engine = create_engine(url, pool_recycle=3600)
