@@ -14,6 +14,6 @@ Usage
 
 .. code-block:: bash
 
-   python -m sqlplay -u "mysql://user@localhost" -c path/to/tables.py
+   python -m sqlplay -u "mysql://user@localhost" -d messages -e replace -c examples/messages.py
 
 Any flavour of SQL supported by :mod:`sqlalchemy` may be used.
