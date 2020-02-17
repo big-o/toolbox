@@ -9,6 +9,6 @@ Contents
 +-------------+-------------------------------------------------------------------------+
 |    Name     |                               Description                               |
 +=============+=========================================================================+
-| ``sqlplay`` | Small script to help practice SQL. Generates random tables of data and  |
-|             | load them into a SQL database.                                          |
+| ``datagen`` | Small script to help practice data manipulation. Generates random       |
+|             | tables of data and optionally loads them into a SQL database.           |
 +-------------+-------------------------------------------------------------------------+

@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-import click
-from importlib.util import spec_from_file_location, module_from_spec
 import logging
 from sqlalchemy import create_engine
 from tqdm.auto import tqdm
@@ -9,11 +7,11 @@ import numpy as np
 import pandas as pd
 
 
-__all__ = ["main"]
+__all__ = ["make_df", "to_sql"]
 __author__ = "big-o"
 
 
-def prepare_fields(flds):
+def _prepare_fields(flds):
     flds = flds.copy()
 
     for key in flds:
@@ -30,7 +28,7 @@ def prepare_fields(flds):
     return flds
 
 
-def make_row(flds, rownum):
+def _make_row(flds, rownum):
     row = {
         name: np.random.choice(fld["values"], p=fld["priors"])
         for name, fld in flds.items()
@@ -46,10 +44,11 @@ def make_df(table, size, fields):
     """
 
     logger = logging.getLogger()
+    fields = _prepare_fields(fields)
     data = []
     try:
         for i in tqdm(range(size), desc="Generating data"):
-            data.append(make_row(fields, i))
+            data.append(_make_row(fields, i))
     except KeyboardInterrupt:
         # Catch Ctrl+C to just truncate the dataframe.
         logger.warning(f"Truncating data at {len(data)} rows.")
@@ -102,54 +101,3 @@ def to_sql(df, url, db, if_exists):
     logger.info(
         f"Table `{db}:{df.name}' created successfully. Uploaded {len(df)} rows."
     )
-
-
-@click.command()
-@click.option(
-    "-u",
-    "--url",
-    required=True,
-    help="SQL URL to make connection with, e.g. 'mysql://user@localhost'.",
-)
-@click.option("-d", "--db", default="play", help="Database name")
-@click.option(
-    "-e",
-    "--if-exists",
-    default="fail",
-    type=click.Choice(["append", "fail", "replace"]),
-    help="Table name",
-)
-@click.option(
-    "-c",
-    "--config",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
-    help=(
-        "Optional config file. Should contain dicts of field names -> "
-        "sequence of possible values called `fields'. "
-        "The dict names will be used as table names."
-    ),
-)
-def main(url, db, if_exists, config):
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s:%(funcName)s: %(message)s"
-    )
-    logger = logging.getLogger()
-
-    spec = spec_from_file_location("config", config)
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    tbls = mod.schema
-
-    for name, schema in tbls.items():
-        schema = schema.copy()
-        schema["fields"] = prepare_fields(schema["fields"])
-        df = make_df(table=name, **schema)
-        if click.confirm(f"{len(df)} records generated. Upload to {db} database?"):
-            to_sql(df, url, db, if_exists)
-        else:
-            logger.warning("Operation aborted at user's request.")
-
-
-if __name__ == "__main__":
-    main()
