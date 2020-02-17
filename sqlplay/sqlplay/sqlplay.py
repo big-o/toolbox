@@ -4,6 +4,7 @@ import click
 from importlib.util import spec_from_file_location, module_from_spec
 import logging
 from sqlalchemy import create_engine
+from tqdm.auto import tqdm
 import numpy as np
 import pandas as pd
 
@@ -29,7 +30,7 @@ def prepare_fields(flds):
     return flds
 
 
-def make_row(flds):
+def make_row(flds, rownum):
     row = {
         name: np.random.choice(fld["values"], p=fld["priors"])
         for name, fld in flds.items()
@@ -39,10 +40,12 @@ def make_row(flds):
     return row
 
 
-def make_table(url, db, if_exists, table, size, fields):
-    logger = logging.getLogger()
+def make_df(table, size, fields):
+    """
+    Create a random dataframe that follows the specified schema.
+    """
 
-    data = [make_row(fields) for i in range(size)]
+    data = [make_row(fields, i) for i in tqdm(range(size), desc="Generating data")]
     df = pd.DataFrame(data)
 
     # Non-repeat fields weren't added. Add those now.
@@ -67,7 +70,14 @@ def make_table(url, db, if_exists, table, size, fields):
         df.sort_values(sort_cols, inplace=True)
 
     df.name = table
+    return df
 
+
+def to_sql(df, url, db, if_exists):
+    """
+    Write the contents of a dataframe to a SQL database.
+    """
+    logger = logging.getLogger()
     engine = create_engine(url, pool_recycle=3600)
     conn = engine.connect()
 
@@ -77,7 +87,7 @@ def make_table(url, db, if_exists, table, size, fields):
         # Bug workaround
         conn.execute(f"DROP TABLE IF EXISTS {table}")
 
-    frame = df.to_sql(table, conn, index=False, if_exists=if_exists)
+    frame = df.to_sql(df.name, conn, index=False, if_exists=if_exists)
 
     conn.close()
 
@@ -123,7 +133,8 @@ def main(url, db, if_exists, config):
     for name, schema in tbls.items():
         schema = schema.copy()
         schema["fields"] = prepare_fields(schema["fields"])
-        make_table(url, db, if_exists, table=name, **schema)
+        df = make_df(**schema)
+        to_sql(df, url, db, if_exists)
 
 
 if __name__ == "__main__":
