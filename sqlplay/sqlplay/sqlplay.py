@@ -45,7 +45,15 @@ def make_df(table, size, fields):
     Create a random dataframe that follows the specified schema.
     """
 
-    data = [make_row(fields, i) for i in tqdm(range(size), desc="Generating data")]
+    logger = logging.getLogger()
+    data = []
+    try:
+        for i in tqdm(range(size), desc="Generating data"):
+            data.append(make_row(fields, i))
+    except KeyboardInterrupt:
+        # Catch Ctrl+C to just truncate the dataframe.
+        logger.warning(f"Truncating data at {len(data)} rows.")
+
     df = pd.DataFrame(data)
 
     # Non-repeat fields weren't added. Add those now.
@@ -85,13 +93,15 @@ def to_sql(df, url, db, if_exists):
     conn.execute(f"USE {db}")
     if if_exists == "replace":
         # Bug workaround
-        conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.execute(f"DROP TABLE IF EXISTS {df.name}")
 
     frame = df.to_sql(df.name, conn, index=False, if_exists=if_exists)
 
     conn.close()
 
-    logger.info(f"Table `{db}:{table}' created successfully.")
+    logger.info(
+        f"Table `{db}:{df.name}' created successfully. Uploaded {len(df)} rows."
+    )
 
 
 @click.command()
@@ -124,6 +134,7 @@ def main(url, db, if_exists, config):
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s:%(funcName)s: %(message)s"
     )
+    logger = logging.getLogger()
 
     spec = spec_from_file_location("config", config)
     mod = module_from_spec(spec)
@@ -133,8 +144,11 @@ def main(url, db, if_exists, config):
     for name, schema in tbls.items():
         schema = schema.copy()
         schema["fields"] = prepare_fields(schema["fields"])
-        df = make_df(**schema)
-        to_sql(df, url, db, if_exists)
+        df = make_df(table=name, **schema)
+        if click.confirm(f"{len(df)} records generated. Upload to {db} database?"):
+            to_sql(df, url, db, if_exists)
+        else:
+            logger.warning("Operation aborted at user's request.")
 
 
 if __name__ == "__main__":
