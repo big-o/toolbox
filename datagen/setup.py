@@ -1,7 +1,7 @@
 from setuptools import find_packages, setup
 
 setup(
-    name="sqlplay",
+    name="datagen",
     version="0.1.0",
     description="Generate random SQL databases from a schema.",
     url="http://github.com/big-o/toolbox/sqlplay",
