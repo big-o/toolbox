@@ -1,0 +1,7 @@
+click
+numpy
+pandas
+scipy
+sqlalchemy
+sqlalchemy_utils
+rich

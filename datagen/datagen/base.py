@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 
-import logging
 from sqlalchemy import create_engine
-from tqdm.auto import tqdm
+from sqlalchemy_utils import database_exists, create_database
+from rich.console import Console
+from rich.progress import track
 import numpy as np
 import pandas as pd
+from scipy.linalg import eigh
 
 
 __all__ = ["make_df", "to_sql"]
 __author__ = "big-o"
+
+
+console = Console()
 
 
 def _prepare_fields(flds):
@@ -38,20 +43,49 @@ def _make_row(flds, rownum):
     return row
 
 
-def make_df(table, size, fields):
+def _validate_corr(corr):
+    if not isinstance(corr, pd.DataFrame):
+        raise ValueError("correlation matrix must be a pandas DataFrame.")
+
+    nflds = len(flds)
+    if corr.shape != (nflds, nflds):
+        raise ValueError(
+            "correlation matrix must be square and have one column/row for each field "
+            "in your schema."
+        )
+
+    if not all(np.issubdtype(t, np.number) for t in corr.dtypes):
+        raise ValueError("correlation matrix must be numeric.")
+
+    try:
+        corr = corr[flds].loc[flds]
+    except KeyError:
+        raise ValueError(
+            "correlation matrix index and columns must be the field names for your "
+            "schema."
+        )
+
+    if not np.allclose(corr, corr.T):
+        raise ValueError("correlation matrix must be symmetric")
+
+    return corr
+
+
+def make_df(table, size, fields, corr=None):
     """
     Create a random dataframe that follows the specified schema.
     """
 
-    logger = logging.getLogger()
     fields = _prepare_fields(fields)
     data = []
+
+    # Generate
     try:
-        for i in tqdm(range(size), desc="Generating data"):
+        for i in track(range(size), description="Generating data..."):
             data.append(_make_row(fields, i))
     except KeyboardInterrupt:
         # Catch Ctrl+C to just truncate the dataframe.
-        logger.warning(f"Truncating data at {len(data)} rows.")
+        console.log(f"[white on red]Truncating data at [bold]{len(data)}[/] rows.[/]")
 
     df = pd.DataFrame(data)
 
@@ -62,11 +96,28 @@ def make_df(table, size, fields):
             if size > len(vals):
                 # Pad it out with a few NULLs
                 vals = vals + [None] * (size - len(vals))
-            col = np.random.choice(vals, replace=False, size=size)
+
+            # Use len(df) instead of size in case it was truncated.
+            col = np.random.choice(vals, replace=False, size=len(df))
             df[field] = col
 
     # Reset the ordering
-    df = df[list(fields.keys())]
+    flds = list(fields.keys())
+    df = df[flds]
+
+    # Alter the random values to add in any correlation if requested.
+    if corr is not None:
+        # corr must be a square dataframe with the indices and columns being the
+        # fields.
+        corr = _validate_corr(corr)
+
+        # Compute the eigenvalues and eigenvectors.
+        evals, evecs = eigh(corr)
+        # Construct c, so c*c^T = corr.
+        c = np.dot(evecs, np.diag(np.sqrt(evals)))
+
+        # Convert the data to correlated random variables.
+        df[:] = np.dot(c, df.values)
 
     sort_cols = [
         (fields[fld]["sort"], fld) for fld in fields if fields[fld].get("sort", False)
@@ -84,12 +135,14 @@ def to_sql(df, url, db, if_exists):
     """
     Write the contents of a dataframe to a SQL database.
     """
-    logger = logging.getLogger()
     engine = create_engine(url, pool_recycle=3600)
     conn = engine.connect()
 
-    conn.execute(f"CREATE DATABASE IF NOT EXISTS {db}")
-    conn.execute(f"USE {db}")
+    # conn.execute(f"CREATE DATABASE IF NOT EXISTS {db}")
+    # conn.execute(f"USE {db}")
+    if not database_exists(url):
+        create_database(url)
+
     if if_exists == "replace":
         # Bug workaround
         conn.execute(f"DROP TABLE IF EXISTS {df.name}")
@@ -98,6 +151,7 @@ def to_sql(df, url, db, if_exists):
 
     conn.close()
 
-    logger.info(
-        f"Table `{db}:{df.name}' created successfully. Uploaded {len(df)} rows."
+    console.log(
+        f"Table [bold magenta]`{db}:{df.name}'[/] created successfully. "
+        f"Uploaded [italic red]{len(df)}[/] rows."
     )

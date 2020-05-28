@@ -1,8 +1,12 @@
 from importlib.util import spec_from_file_location, module_from_spec
 import click
-import logging
+from rich.console import Console
 
 from .base import *
+
+
+console = Console()
+
 
 @click.command()
 @click.option(
@@ -31,11 +35,6 @@ from .base import *
     ),
 )
 def main(url, db, if_exists, config):
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s:%(funcName)s: %(message)s"
-    )
-    logger = logging.getLogger()
-
     spec = spec_from_file_location("config", config)
     mod = module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -47,7 +46,7 @@ def main(url, db, if_exists, config):
         if click.confirm(f"{len(df)} records generated. Upload to {db} database?"):
             to_sql(df, url, db, if_exists)
         else:
-            logger.warning("Operation aborted at user's request.")
+            console.log("[white on red]Operation aborted at user's request.[/]")
 
 
 if __name__ == "__main__":
